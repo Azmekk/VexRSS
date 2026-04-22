@@ -1,0 +1,29 @@
+# Copy this file to `docker-compose.yml` and tweak for your setup.
+# The local copy is gitignored.
+
+services:
+  vexrss:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Or, once you've published the image somewhere:
+    # image: ghcr.io/your-user/vexrss:latest
+
+    container_name: vexrss
+    restart: unless-stopped
+
+    ports:
+      # Host:container. Change the host side if :8080 is taken.
+      - "8080:8080"
+
+    volumes:
+      # Persist the SQLite database across container rebuilds.
+      - ./data:/data
+
+    # Optional: override the default flags. The defaults are already sensible;
+    # uncomment to tweak.
+    # command:
+    #   - "-addr=:8080"
+    #   - "-db=/data/vexrss.db"
+    #   - "-poll=15m"
+    #   - "-log=info"

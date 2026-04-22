@@ -1,0 +1,24 @@
+# Normalise line endings: LF in the repo, native on checkout for most files.
+* text=auto eol=lf
+
+# Text files that must stay LF even on Windows checkouts.
+*.go      text eol=lf
+*.sql     text eol=lf
+*.html    text eol=lf
+*.css     text eol=lf
+*.js      text eol=lf
+*.svg     text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.md      text eol=lf
+*.sh      text eol=lf
+Dockerfile text eol=lf
+
+# Windows-only scripts stay CRLF.
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+# Binary (don't try to diff or text-convert).
+*.png     binary
+*.jpg     binary
+*.ico     binary

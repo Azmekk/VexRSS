@@ -1,0 +1,11 @@
+{{define "sources_list"}}
+<ul id="sources-list" class="sources">
+  {{if .}}
+    {{range .}}
+      {{template "source_row" .}}
+    {{end}}
+  {{else}}
+    <li class="sources__empty">No sources yet.</li>
+  {{end}}
+</ul>
+{{end}}

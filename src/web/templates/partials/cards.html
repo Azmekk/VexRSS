@@ -1,0 +1,12 @@
+{{define "cards"}}
+{{if .Cards}}
+  {{range .Cards}}
+    {{template "card" .}}
+  {{end}}
+{{else}}
+  <div class="empty">
+    <h3>No stories yet</h3>
+    <p>Open the menu (top-left) and add a feed URL to get started.</p>
+  </div>
+{{end}}
+{{end}}

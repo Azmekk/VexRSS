@@ -1,0 +1,15 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema:  "db/schema.sql"
+    queries: "db/query.sql"
+    gen:
+      go:
+        package: "dbq"
+        out:     "db/gen"
+        sql_package: "database/sql"
+        emit_json_tags: false
+        emit_prepared_queries: false
+        emit_interface: false
+        emit_exact_table_names: false
+        emit_empty_slices: true

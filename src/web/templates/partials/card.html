@@ -1,0 +1,20 @@
+{{define "card"}}
+<a class="card {{if not .ImageURL}}card--noimage{{end}}"
+   href="{{.URL}}" target="_blank" rel="noopener noreferrer"
+   style="--img:{{safeCSSURL .ImageURL}}; --hue:{{hueFor .SourceTitle}};">
+  <div class="card__bg" aria-hidden="true"></div>
+  <div class="card__image" aria-hidden="true"></div>
+  <div class="card__body">
+    <div class="card__meta">
+      <span class="card__chip" style="--chip-hue:{{hueFor .SourceTitle}};">{{.SourceTitle}}</span>
+      {{with timeAgo .PublishedAt}}<span class="card__time">{{.}}</span>{{end}}
+    </div>
+    <h2 class="card__title">{{.Title}}</h2>
+    {{with .Description}}<p class="card__blurb">{{trimBlurb . 160}}</p>{{end}}
+    <div class="card__foot">
+      <span class="card__host">{{hostOf .URL}}</span>
+      <span class="card__arrow" aria-hidden="true">→</span>
+    </div>
+  </div>
+</a>
+{{end}}
