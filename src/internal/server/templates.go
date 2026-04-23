@@ -1,7 +1,9 @@
 package server
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"html/template"
@@ -128,8 +130,23 @@ type Templates struct {
 	partials *template.Template
 }
 
-func ParseTemplates(fsys fs.FS) (*Templates, error) {
+func ParseTemplates(fsys fs.FS, staticFS fs.FS) (*Templates, error) {
 	funcs := Funcs()
+
+	// Compute short content hashes of the volatile static assets and register
+	// a `staticURL` template helper that appends `?v=<hash>`. Browsers cache
+	// the path forever; the URL changes only when the file content changes,
+	// so new deploys invalidate old caches without manual version bumps.
+	versions, err := computeStaticVersions(staticFS, "app.css", "app.js")
+	if err != nil {
+		return nil, fmt.Errorf("compute static versions: %w", err)
+	}
+	funcs["staticURL"] = func(name string) string {
+		if v, ok := versions[name]; ok {
+			return "/static/" + name + "?v=" + v
+		}
+		return "/static/" + name
+	}
 
 	partialFiles := []string{
 		"templates/partials/card.html",
@@ -173,6 +190,25 @@ func (t *Templates) RenderPage(w http.ResponseWriter, name string, data any) err
 func (t *Templates) RenderPartial(w http.ResponseWriter, name string, data any) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return t.partials.ExecuteTemplate(w, name, data)
+}
+
+// computeStaticVersions reads each named file under the static FS and returns
+// a {name: short-hex-hash} map. Used for cache-busting via `?v=<hash>` query
+// strings on embedded CSS/JS assets.
+func computeStaticVersions(staticFS fs.FS, names ...string) (map[string]string, error) {
+	if staticFS == nil {
+		return map[string]string{}, nil
+	}
+	out := make(map[string]string, len(names))
+	for _, n := range names {
+		data, err := fs.ReadFile(staticFS, n)
+		if err != nil {
+			return nil, fmt.Errorf("read static %q: %w", n, err)
+		}
+		sum := sha256.Sum256(data)
+		out[n] = hex.EncodeToString(sum[:])[:10]
+	}
+	return out, nil
 }
 
 // compile-time sanity check so we can use embed.FS without an import loop elsewhere

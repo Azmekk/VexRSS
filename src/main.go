@@ -67,7 +67,7 @@ func main() {
 		logger.Error("static FS", "err", err)
 		os.Exit(1)
 	}
-	templates, err := server.ParseTemplates(web.Templates)
+	templates, err := server.ParseTemplates(web.Templates, staticFS)
 	if err != nil {
 		logger.Error("parse templates", "err", err)
 		os.Exit(1)

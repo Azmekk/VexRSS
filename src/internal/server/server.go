@@ -71,7 +71,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/api/weather", s.handleWeather)
 	r.Get("/api/geocode", s.handleGeocode)
 
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(s.Static)))
+	r.Handle("/static/*", http.StripPrefix("/static/", cacheHashedStatic(http.FileServer(s.Static))))
 
 	// Serve the SVG favicon at the legacy /favicon.ico path too — browsers
 	// request it unconditionally even when we've linked an SVG explicitly.
@@ -93,6 +93,19 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	return r
+}
+
+// cacheHashedStatic adds an immutable 1-year Cache-Control header to static
+// asset responses whose URL carries a ?v= query string. Our templates emit
+// those URLs via the staticURL template helper; the hash changes whenever
+// the asset bytes change, so it's safe to let browsers cache forever.
+func cacheHashedStatic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // slogRequest is a minimal access log middleware built on slog. We use it
