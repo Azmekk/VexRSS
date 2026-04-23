@@ -1,13 +1,14 @@
-# Copy this file to `docker-compose.yml` and tweak for your setup.
-# The local copy is gitignored.
+# Copy this file to `docker-compose.yml` and run `docker compose up -d`.
+# The local copy is gitignored so your changes stay local.
 
 services:
   vexrss:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # Or, once you've published the image somewhere:
-    # image: ghcr.io/your-user/vexrss:latest
+    image: ghcr.io/azmekk/vexrss:latest
+
+    # Or build locally from a cloned repo:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
 
     container_name: vexrss
     restart: unless-stopped
@@ -17,13 +18,12 @@ services:
       - "8080:8080"
 
     volumes:
-      # Persist the SQLite database across container rebuilds.
+      # Persists the SQLite database across container rebuilds.
       - ./data:/data
 
-    # Optional: override the default flags. The defaults are already sensible;
-    # uncomment to tweak.
+    # Optional — the defaults below are already applied. Uncomment to tweak.
     # command:
     #   - "-addr=:8080"
     #   - "-db=/data/vexrss.db"
-    #   - "-poll=15m"
-    #   - "-log=info"
+    #   - "-poll=15m"       # how often feeds are refreshed
+    #   - "-log=info"       # debug | info | warn | error

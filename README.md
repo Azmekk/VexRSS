@@ -1,120 +1,58 @@
 # VexRSS
 
-A single-binary, self-hostable Go RSS reader with a glassy, mobile-first UI. It shuffles news across your feeds, shows the current time and weather, and deduplicates cross-source stories that share the same URL.
+A small, self-hosted RSS reader. One Go binary, one SQLite file, and a glassy card UI that looks good on your phone.
 
-- **One process, one file.** Everything — templates, static assets, schema — is embedded into a single Go binary. State lives in a SQLite file you point it at.
-- **Zero external services.** No API keys. Weather comes from Open-Meteo (free, no key), geocoding falls back to the same service.
-- **Designed for mobile.** Sticky compact header, single-column card grid on small screens, 44px+ tap targets, no hover-only interactions.
-- **htmx, not a SPA.** Server-rendered `html/template` with small htmx swaps for shuffle/filter/add-source. No JS build step.
+- **Shuffle, sort, filter** news across all your feeds, or just one at a time.
+- **Card-based reading.** Each story renders as a rounded card with its image, a blurred version of that image as the backdrop, and a glass text panel on top.
+- **Clock + weather** in the header. Weather uses [Open-Meteo](https://open-meteo.com/), so no API key — just allow location once.
+- **Cross-source dedup.** If two feeds link to the same article, you see it once.
+- **Works on mobile.** Responsive layout, no hover-only interactions.
 
-## Features
-
-- **Shuffle / Newest / Oldest** sort modes, plus per-source filtering.
-- **Glass cards**: each story renders as a rounded rectangle with its own image, the same image blurred & horizontally flipped behind it, and text on a semi-transparent glass panel.
-- **Cross-source dedup**: `url_norm` normalises feed links (strips `utm_*`, `fbclid`, `www.`, trailing slashes, lowercases host) and a SQL `ROW_NUMBER() PARTITION BY url_norm` window collapses duplicates at query time.
-- **Current time & weather** in the header. Location comes from `navigator.geolocation` (cached in `localStorage`); a city-name fallback is available when permission is denied.
-- **Dedicated `/settings` page** for adding, renaming, refreshing and removing sources — inline-edit the source name, and it flows through to the card chips and the source-filter dropdown.
-- **Custom dropdowns** that match the dark theme (no jarring native OS popups).
-
-## Stack
-
-- `github.com/go-chi/chi/v5` — HTTP router
-- `modernc.org/sqlite` — pure-Go SQLite driver (no CGo; builds statically on any platform)
-- `sqlc` v2 — type-safe generated query bindings, added as a Go tool dependency (`go tool sqlc …`)
-- `github.com/mmcdole/gofeed` — RSS / Atom / JSON feed parser
-- `golang.org/x/net/html` — fallback image extraction from feed item HTML
-- `html/template` + [htmx](https://htmx.org/) — server-rendered UI with partial-swap interactivity
-- [Open-Meteo](https://open-meteo.com/) — weather + geocoding, proxied through the server with a 10-minute in-memory cache
-
-## Running
-
-### With Docker Compose (recommended)
+## Quick start — Docker Compose
 
 ```bash
-cp docker-compose.yml.example docker-compose.yml
+curl -O https://raw.githubusercontent.com/Azmekk/VexRSS/main/docker-compose.yml.example
+mv docker-compose.yml.example docker-compose.yml
 docker compose up -d
 ```
 
-Then open <http://localhost:8080>. Data persists in `./data/vexrss.db`.
+Open <http://localhost:8080>. Click the gear icon (top-left) to add your first feed — try `https://hnrss.org/frontpage` or `https://xkcd.com/rss.xml` to get going.
 
-### With Docker directly
+The SQLite database is stored in `./data/vexrss.db` next to your compose file.
+
+## Docker (without Compose)
 
 ```bash
-docker build -t vexrss .
 docker run -d \
   --name vexrss \
   -p 8080:8080 \
   -v "$(pwd)/data:/data" \
   --restart unless-stopped \
-  vexrss
+  ghcr.io/azmekk/vexrss:latest
 ```
 
-### From source
+## Configuration
 
-Requires Go 1.25+ (no CGo needed). All commands run from `src/`:
+Override via flags on the container command:
+
+| Flag | Default | What it does |
+|---|---|---|
+| `-addr` | `:8080` | Listen address |
+| `-db` | `/data/vexrss.db` | Path to the SQLite file |
+| `-poll` | `15m` | How often feeds are refreshed (Go duration) |
+| `-log` | `info` | `debug` \| `info` \| `warn` \| `error` |
+
+## Building from source
+
+Requires Go 1.26+. No CGo or external tools needed at runtime — everything is embedded into the binary.
 
 ```bash
-cd src
-go tool sqlc generate              # only if you changed db/schema.sql or db/query.sql
-go build -o ../bin/vexrss .        # ../bin/vexrss.exe on Windows
+git clone https://github.com/Azmekk/VexRSS.git
+cd VexRSS/src
+go build -o ../bin/vexrss .
 ../bin/vexrss -addr :8080 -db ./vexrss.db
 ```
 
-For development without producing a binary:
-
-```bash
-cd src && go run . -addr :8080 -db ./vexrss.db
-```
-
-### Flags
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `-addr` | `:8080` | Listen address |
-| `-db` | `vexrss.db` | Path to the SQLite database file |
-| `-poll` | `15m` | Feed refresh interval (Go `time.Duration`) |
-| `-log` | `info` | Log level: `debug` \| `info` \| `warn` \| `error` |
-
-## First use
-
-Open the app and click the **gear icon** (top-left of the header) to go to `/settings`. Paste a feed URL — any RSS, Atom, or JSON feed works. Try:
-
-- `https://hnrss.org/frontpage` (Hacker News)
-- `https://www.theverge.com/rss/index.xml`
-- `https://xkcd.com/rss.xml`
-
-The first fetch runs inline, so cards show up within a second or two of adding a source.
-
-## Repo layout
-
-```
-bin/                    Compiled binaries (gitignored per-file; dir is tracked)
-Dockerfile              Multi-stage build → distroless/static image
-docker-compose.yml.example
-src/                    The Go module
-├── main.go               Entrypoint: flags, DB open, fetcher, server
-├── db/
-│   ├── schema.sql          Applied on startup; embedded into the binary
-│   ├── query.sql           sqlc source queries
-│   └── gen/                sqlc output (checked in so Docker builds don't need sqlc)
-├── internal/
-│   ├── feed/               gofeed wrapper + URL normaliser + image picker + HTML strip
-│   ├── server/             chi router, handlers, html/template loader
-│   └── weather/            Open-Meteo client + 10-min cache
-├── web/
-│   ├── templates/          layout, index, settings, partials (card, cards, sources_list…)
-│   └── static/             app.css, app.js, favicon.svg
-├── go.mod, go.sum
-└── sqlc.yaml
-```
-
-## Development notes
-
-- **sqlc comments are ASCII-only.** Multi-line `--` comments with em-dashes or other non-ASCII characters corrupt the generated output. Stick to a single `-- name: … :one|:many|:exec` line per query.
-- **Schema migrations.** Every boot runs `db/schema.sql` with `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`, so additive changes are automatic. Destructive changes need a manual migration for now.
-- **Embedding.** `src/web/embed.go` embeds `templates/**/*.html` and `static/*`; `src/db/embed.go` embeds `schema.sql`. No runtime filesystem dependency.
-- **Tests.** None yet. Contributions welcome.
-
 ## License
 
-Not yet licensed. Code is **all rights reserved** for now — open an issue if you'd like to use it for something specific.
+Not yet licensed. All rights reserved for now — open an issue if you have a specific use case in mind.
