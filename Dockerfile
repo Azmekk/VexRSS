@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
 # -------- build stage --------
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-bookworm AS build
+# Allow Go to auto-fetch a newer toolchain if go.mod declares one past the
+# image's baseline.
+ENV GOTOOLCHAIN=auto
 
 WORKDIR /src
 
