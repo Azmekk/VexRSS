@@ -16,8 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Then the rest of the module.
 COPY src/ ./
 
-# Pure-Go build: modernc.org/sqlite has no CGo dependency, so we can target
-# a fully static binary that runs on distroless/scratch.
+# Pure-Go build (no CGo) so the runtime image can be tiny and static.
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -26,16 +25,23 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/vexrss .
 
 # -------- runtime stage --------
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates su-exec tini \
+    && addgroup -S -g 1000 vexrss \
+    && adduser -S -u 1000 -G vexrss -H vexrss
 
 WORKDIR /app
 COPY --from=build /out/vexrss /app/vexrss
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Persisted state lives here; mount a volume at /data in prod.
+# Persisted state lives here; mount a volume or bind at /data in prod.
 VOLUME ["/data"]
 EXPOSE 8080
 
-USER nonroot:nonroot
-
-ENTRYPOINT ["/app/vexrss"]
+# tini reaps zombies and forwards signals so `docker stop` shuts down cleanly.
+# The entrypoint fixes /data ownership, then drops privileges to the vexrss
+# user before exec'ing the binary.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["-addr", ":8080", "-db", "/data/vexrss.db", "-poll", "15m"]
