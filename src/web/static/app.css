@@ -508,22 +508,29 @@ button { font: inherit; color: inherit; }
 .settings__sub { margin: 0; color: var(--ink-dim); font-size: 0.92rem; }
 
 .settings__add {
-  display: flex; flex-direction: column; gap: 0.5rem;
+  display: flex; flex-direction: column; gap: 0.7rem;
   padding: 1rem;
   border-radius: var(--radius-md);
   background: var(--glass);
   border: 1px solid var(--glass-border);
   margin: 1.1rem 0 1rem;
 }
+.settings__add-field { display: flex; flex-direction: column; gap: 0.3rem; }
 .settings__add-label {
   font-size: 0.72rem;
   color: var(--ink-faint);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  display: flex; align-items: baseline; gap: 0.4rem;
 }
-.settings__add-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.settings__add-row .input { flex: 1; min-width: 0; }
-.settings__add-row .btn { min-width: 110px; }
+.settings__optional {
+  letter-spacing: 0;
+  text-transform: none;
+  color: rgba(255,255,255,0.35);
+  font-size: 0.96em;
+}
+.settings__add-actions { display: flex; justify-content: flex-end; }
+.settings__add-actions .btn { min-width: 120px; }
 .settings__hint { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--ink-faint); line-height: 1.5; }
 .settings__hint code { background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 6px; font-size: 0.86em; }
 

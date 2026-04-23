@@ -16,10 +16,20 @@
         hx-target="#sources-list"
         hx-swap="outerHTML"
         hx-on::after-request="if(event.detail.successful){this.reset();}">
-    <label class="settings__add-label" for="feed-url-input">Add RSS / Atom feed</label>
-    <div class="settings__add-row">
+    <div class="settings__add-field">
+      <label class="settings__add-label" for="feed-url-input">Feed URL</label>
       <input id="feed-url-input" class="input" type="url" name="feed_url"
              placeholder="https://example.com/feed.xml" required autocomplete="off">
+    </div>
+    <div class="settings__add-field">
+      <label class="settings__add-label" for="feed-name-input">
+        Display name <span class="settings__optional">— optional</span>
+      </label>
+      <input id="feed-name-input" class="input" type="text" name="title"
+             maxlength="80" autocomplete="off" spellcheck="false"
+             placeholder="Leave blank to use the feed's own title">
+    </div>
+    <div class="settings__add-actions">
       <button class="btn btn--primary" type="submit">Add feed</button>
     </div>
     <p class="settings__hint">Tip: try <code>https://hnrss.org/frontpage</code>, <code>https://www.theverge.com/rss/index.xml</code>, or <code>https://xkcd.com/rss.xml</code></p>

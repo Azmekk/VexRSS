@@ -141,12 +141,21 @@ func (s *Server) handleAddSource(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(feedURL, "http://") && !strings.HasPrefix(feedURL, "https://") {
 		feedURL = "https://" + feedURL
 	}
+	customTitle := strings.TrimSpace(r.Form.Get("title"))
+	if len(customTitle) > 80 {
+		customTitle = customTitle[:80]
+	}
 
-	title, siteURL, err := feed.ResolveFeedMeta(r.Context(), feedURL)
+	parsedTitle, siteURL, err := feed.ResolveFeedMeta(r.Context(), feedURL)
 	if err != nil {
 		s.Logger.Warn("resolve feed meta failed", "url", feedURL, "err", err)
 		http.Error(w, "could not parse that feed — check the URL", http.StatusBadRequest)
 		return
+	}
+
+	title := customTitle
+	if title == "" {
+		title = parsedTitle
 	}
 
 	created, err := s.Queries.CreateSource(r.Context(), dbq.CreateSourceParams{
