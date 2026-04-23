@@ -56,6 +56,17 @@ func (q *Queries) DeleteSource(ctx context.Context, id int64) error {
 	return err
 }
 
+const getSettings = `-- name: GetSettings :one
+SELECT id, retention_days FROM settings WHERE id = 1
+`
+
+func (q *Queries) GetSettings(ctx context.Context) (Setting, error) {
+	row := q.db.QueryRowContext(ctx, getSettings)
+	var i Setting
+	err := row.Scan(&i.ID, &i.RetentionDays)
+	return i, err
+}
+
 const getSource = `-- name: GetSource :one
 SELECT id, title, feed_url, site_url, icon_url, created_at, last_fetch
 FROM sources WHERE id = ?
@@ -80,26 +91,32 @@ const listItemsNewest = `-- name: ListItemsNewest :many
 WITH ranked AS (
   SELECT
     i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-    i.published_at, i.fetched_at,
-    s.title AS source_title, s.site_url AS source_site,
+    i.published_at, i.fetched_at, i.last_seen_in_feed, i.viewed_at,
+    s.title AS source_title, s.site_url AS source_site, s.last_fetch AS source_last_fetch,
     ROW_NUMBER() OVER (
       PARTITION BY i.url_norm
       ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id ASC
     ) AS rn
   FROM items i
   JOIN sources s ON s.id = i.source_id
+  WHERE ( CAST(?1 AS INTEGER) = 0 OR i.image_url != '' )
+    AND ( CAST(?2 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+    AND ( CAST(?3 AS INTEGER) = 0 OR i.viewed_at IS NULL )
 )
 SELECT id, source_id, guid, title, url, description, image_url,
-       published_at, fetched_at, source_title, source_site
+       published_at, fetched_at, viewed_at, source_title, source_site
 FROM ranked
 WHERE rn = 1
 ORDER BY COALESCE(published_at, fetched_at) DESC, id DESC
-LIMIT ? OFFSET ?
+LIMIT ?4 OFFSET ?5
 `
 
 type ListItemsNewestParams struct {
-	Limit  int64
-	Offset int64
+	Column1 int64
+	Column2 int64
+	Column3 int64
+	Limit   int64
+	Offset  int64
 }
 
 type ListItemsNewestRow struct {
@@ -112,12 +129,19 @@ type ListItemsNewestRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsNewest(ctx context.Context, arg ListItemsNewestParams) ([]ListItemsNewestRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsNewest, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsNewest,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +159,7 @@ func (q *Queries) ListItemsNewest(ctx context.Context, arg ListItemsNewestParams
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -154,17 +179,23 @@ func (q *Queries) ListItemsNewest(ctx context.Context, arg ListItemsNewestParams
 const listItemsNewestBySource = `-- name: ListItemsNewestBySource :many
 SELECT
   i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-  i.published_at, i.fetched_at,
+  i.published_at, i.fetched_at, i.viewed_at,
   s.title AS source_title, s.site_url AS source_site
 FROM items i
 JOIN sources s ON s.id = i.source_id
-WHERE i.source_id = ?
+WHERE i.source_id = ?1
+  AND ( CAST(?2 AS INTEGER) = 0 OR i.image_url != '' )
+  AND ( CAST(?3 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+  AND ( CAST(?4 AS INTEGER) = 0 OR i.viewed_at IS NULL )
 ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC
-LIMIT ? OFFSET ?
+LIMIT ?5 OFFSET ?6
 `
 
 type ListItemsNewestBySourceParams struct {
 	SourceID int64
+	Column2  int64
+	Column3  int64
+	Column4  int64
 	Limit    int64
 	Offset   int64
 }
@@ -179,12 +210,20 @@ type ListItemsNewestBySourceRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsNewestBySource(ctx context.Context, arg ListItemsNewestBySourceParams) ([]ListItemsNewestBySourceRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsNewestBySource, arg.SourceID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsNewestBySource,
+		arg.SourceID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +241,7 @@ func (q *Queries) ListItemsNewestBySource(ctx context.Context, arg ListItemsNewe
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -222,26 +262,32 @@ const listItemsOldest = `-- name: ListItemsOldest :many
 WITH ranked AS (
   SELECT
     i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-    i.published_at, i.fetched_at,
-    s.title AS source_title, s.site_url AS source_site,
+    i.published_at, i.fetched_at, i.last_seen_in_feed, i.viewed_at,
+    s.title AS source_title, s.site_url AS source_site, s.last_fetch AS source_last_fetch,
     ROW_NUMBER() OVER (
       PARTITION BY i.url_norm
       ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id ASC
     ) AS rn
   FROM items i
   JOIN sources s ON s.id = i.source_id
+  WHERE ( CAST(?1 AS INTEGER) = 0 OR i.image_url != '' )
+    AND ( CAST(?2 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+    AND ( CAST(?3 AS INTEGER) = 0 OR i.viewed_at IS NULL )
 )
 SELECT id, source_id, guid, title, url, description, image_url,
-       published_at, fetched_at, source_title, source_site
+       published_at, fetched_at, viewed_at, source_title, source_site
 FROM ranked
 WHERE rn = 1
 ORDER BY COALESCE(published_at, fetched_at) ASC, id ASC
-LIMIT ? OFFSET ?
+LIMIT ?4 OFFSET ?5
 `
 
 type ListItemsOldestParams struct {
-	Limit  int64
-	Offset int64
+	Column1 int64
+	Column2 int64
+	Column3 int64
+	Limit   int64
+	Offset  int64
 }
 
 type ListItemsOldestRow struct {
@@ -254,12 +300,19 @@ type ListItemsOldestRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsOldest(ctx context.Context, arg ListItemsOldestParams) ([]ListItemsOldestRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsOldest, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsOldest,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +330,7 @@ func (q *Queries) ListItemsOldest(ctx context.Context, arg ListItemsOldestParams
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -296,17 +350,23 @@ func (q *Queries) ListItemsOldest(ctx context.Context, arg ListItemsOldestParams
 const listItemsOldestBySource = `-- name: ListItemsOldestBySource :many
 SELECT
   i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-  i.published_at, i.fetched_at,
+  i.published_at, i.fetched_at, i.viewed_at,
   s.title AS source_title, s.site_url AS source_site
 FROM items i
 JOIN sources s ON s.id = i.source_id
-WHERE i.source_id = ?
+WHERE i.source_id = ?1
+  AND ( CAST(?2 AS INTEGER) = 0 OR i.image_url != '' )
+  AND ( CAST(?3 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+  AND ( CAST(?4 AS INTEGER) = 0 OR i.viewed_at IS NULL )
 ORDER BY COALESCE(i.published_at, i.fetched_at) ASC, i.id ASC
-LIMIT ? OFFSET ?
+LIMIT ?5 OFFSET ?6
 `
 
 type ListItemsOldestBySourceParams struct {
 	SourceID int64
+	Column2  int64
+	Column3  int64
+	Column4  int64
 	Limit    int64
 	Offset   int64
 }
@@ -321,12 +381,20 @@ type ListItemsOldestBySourceRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsOldestBySource(ctx context.Context, arg ListItemsOldestBySourceParams) ([]ListItemsOldestBySourceRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsOldestBySource, arg.SourceID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsOldestBySource,
+		arg.SourceID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -344,6 +412,7 @@ func (q *Queries) ListItemsOldestBySource(ctx context.Context, arg ListItemsOlde
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -364,26 +433,38 @@ const listItemsRandom = `-- name: ListItemsRandom :many
 WITH ranked AS (
   SELECT
     i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-    i.published_at, i.fetched_at,
-    s.title AS source_title, s.site_url AS source_site,
+    i.published_at, i.fetched_at, i.last_seen_in_feed, i.viewed_at,
+    s.title AS source_title, s.site_url AS source_site, s.last_fetch AS source_last_fetch,
     ROW_NUMBER() OVER (
       PARTITION BY i.url_norm
       ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id ASC
     ) AS rn
   FROM items i
   JOIN sources s ON s.id = i.source_id
+  WHERE ( CAST(?1 AS INTEGER) = 0 OR i.image_url != '' )
+    AND ( CAST(?2 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+    AND ( CAST(?3 AS INTEGER) = 0 OR i.viewed_at IS NULL )
 )
 SELECT id, source_id, guid, title, url, description, image_url,
-       published_at, fetched_at, source_title, source_site
+       published_at, fetched_at, viewed_at, source_title, source_site
 FROM ranked
 WHERE rn = 1
-ORDER BY RANDOM()
-LIMIT ? OFFSET ?
+ORDER BY
+  CASE
+    WHEN viewed_at IS NULL AND source_last_fetch IS NOT NULL AND last_seen_in_feed >= source_last_fetch THEN 0
+    WHEN viewed_at IS NULL THEN 1
+    ELSE 2
+  END,
+  RANDOM()
+LIMIT ?4 OFFSET ?5
 `
 
 type ListItemsRandomParams struct {
-	Limit  int64
-	Offset int64
+	Column1 int64
+	Column2 int64
+	Column3 int64
+	Limit   int64
+	Offset  int64
 }
 
 type ListItemsRandomRow struct {
@@ -396,12 +477,19 @@ type ListItemsRandomRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsRandom(ctx context.Context, arg ListItemsRandomParams) ([]ListItemsRandomRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsRandom, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsRandom,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +507,7 @@ func (q *Queries) ListItemsRandom(ctx context.Context, arg ListItemsRandomParams
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -438,17 +527,29 @@ func (q *Queries) ListItemsRandom(ctx context.Context, arg ListItemsRandomParams
 const listItemsRandomBySource = `-- name: ListItemsRandomBySource :many
 SELECT
   i.id, i.source_id, i.guid, i.title, i.url, i.description, i.image_url,
-  i.published_at, i.fetched_at,
+  i.published_at, i.fetched_at, i.viewed_at,
   s.title AS source_title, s.site_url AS source_site
 FROM items i
 JOIN sources s ON s.id = i.source_id
-WHERE i.source_id = ?
-ORDER BY RANDOM()
-LIMIT ? OFFSET ?
+WHERE i.source_id = ?1
+  AND ( CAST(?2 AS INTEGER) = 0 OR i.image_url != '' )
+  AND ( CAST(?3 AS INTEGER) = 0 OR (s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch) )
+  AND ( CAST(?4 AS INTEGER) = 0 OR i.viewed_at IS NULL )
+ORDER BY
+  CASE
+    WHEN i.viewed_at IS NULL AND s.last_fetch IS NOT NULL AND i.last_seen_in_feed >= s.last_fetch THEN 0
+    WHEN i.viewed_at IS NULL THEN 1
+    ELSE 2
+  END,
+  RANDOM()
+LIMIT ?5 OFFSET ?6
 `
 
 type ListItemsRandomBySourceParams struct {
 	SourceID int64
+	Column2  int64
+	Column3  int64
+	Column4  int64
 	Limit    int64
 	Offset   int64
 }
@@ -463,12 +564,20 @@ type ListItemsRandomBySourceRow struct {
 	ImageUrl    string
 	PublishedAt sql.NullTime
 	FetchedAt   time.Time
+	ViewedAt    sql.NullTime
 	SourceTitle string
 	SourceSite  string
 }
 
 func (q *Queries) ListItemsRandomBySource(ctx context.Context, arg ListItemsRandomBySourceParams) ([]ListItemsRandomBySourceRow, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsRandomBySource, arg.SourceID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listItemsRandomBySource,
+		arg.SourceID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -486,6 +595,7 @@ func (q *Queries) ListItemsRandomBySource(ctx context.Context, arg ListItemsRand
 			&i.ImageUrl,
 			&i.PublishedAt,
 			&i.FetchedAt,
+			&i.ViewedAt,
 			&i.SourceTitle,
 			&i.SourceSite,
 		); err != nil {
@@ -539,12 +649,45 @@ func (q *Queries) ListSources(ctx context.Context) ([]Source, error) {
 	return items, nil
 }
 
-const touchSourceFetch = `-- name: TouchSourceFetch :exec
-UPDATE sources SET last_fetch = CURRENT_TIMESTAMP WHERE id = ?
+const markItemSeen = `-- name: MarkItemSeen :exec
+UPDATE items SET viewed_at = CURRENT_TIMESTAMP
+WHERE id = ? AND viewed_at IS NULL
 `
 
-func (q *Queries) TouchSourceFetch(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, touchSourceFetch, id)
+func (q *Queries) MarkItemSeen(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, markItemSeen, id)
+	return err
+}
+
+const pruneOldItems = `-- name: PruneOldItems :exec
+DELETE FROM items WHERE last_seen_in_feed < ?
+`
+
+func (q *Queries) PruneOldItems(ctx context.Context, lastSeenInFeed time.Time) error {
+	_, err := q.db.ExecContext(ctx, pruneOldItems, lastSeenInFeed)
+	return err
+}
+
+const touchSourceFetch = `-- name: TouchSourceFetch :exec
+UPDATE sources SET last_fetch = ? WHERE id = ?
+`
+
+type TouchSourceFetchParams struct {
+	LastFetch sql.NullTime
+	ID        int64
+}
+
+func (q *Queries) TouchSourceFetch(ctx context.Context, arg TouchSourceFetchParams) error {
+	_, err := q.db.ExecContext(ctx, touchSourceFetch, arg.LastFetch, arg.ID)
+	return err
+}
+
+const updateRetention = `-- name: UpdateRetention :exec
+UPDATE settings SET retention_days = ? WHERE id = 1
+`
+
+func (q *Queries) UpdateRetention(ctx context.Context, retentionDays int64) error {
+	_, err := q.db.ExecContext(ctx, updateRetention, retentionDays)
 	return err
 }
 
@@ -576,26 +719,28 @@ func (q *Queries) UpdateSource(ctx context.Context, arg UpdateSourceParams) (Sou
 }
 
 const upsertItem = `-- name: UpsertItem :exec
-INSERT INTO items (source_id, guid, title, url, url_norm, description, image_url, published_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO items (source_id, guid, title, url, url_norm, description, image_url, published_at, last_seen_in_feed)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_id, guid) DO UPDATE SET
   title = excluded.title,
   url = excluded.url,
   url_norm = excluded.url_norm,
   description = excluded.description,
   image_url = excluded.image_url,
-  published_at = excluded.published_at
+  published_at = excluded.published_at,
+  last_seen_in_feed = excluded.last_seen_in_feed
 `
 
 type UpsertItemParams struct {
-	SourceID    int64
-	Guid        string
-	Title       string
-	Url         string
-	UrlNorm     string
-	Description string
-	ImageUrl    string
-	PublishedAt sql.NullTime
+	SourceID       int64
+	Guid           string
+	Title          string
+	Url            string
+	UrlNorm        string
+	Description    string
+	ImageUrl       string
+	PublishedAt    sql.NullTime
+	LastSeenInFeed time.Time
 }
 
 func (q *Queries) UpsertItem(ctx context.Context, arg UpsertItemParams) error {
@@ -608,6 +753,7 @@ func (q *Queries) UpsertItem(ctx context.Context, arg UpsertItemParams) error {
 		arg.Description,
 		arg.ImageUrl,
 		arg.PublishedAt,
+		arg.LastSeenInFeed,
 	)
 	return err
 }

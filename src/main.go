@@ -53,6 +53,10 @@ func main() {
 		logger.Error("apply schema", "err", err)
 		os.Exit(1)
 	}
+	if err := migrateSchema(sqlDB); err != nil {
+		logger.Error("migrate schema", "err", err)
+		os.Exit(1)
+	}
 
 	queries := dbq.New(sqlDB)
 	weatherCli := weather.New()
@@ -115,6 +119,48 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// migrateSchema brings older databases up to the current schema. The base
+// schema.sql is idempotent for CREATE TABLE/INDEX, but ALTER TABLE ADD COLUMN
+// is not — so we introspect pragma_table_info and only run the ALTER when the
+// column is missing. Column defaults match the CREATE TABLE in schema.sql so a
+// fresh DB and a migrated one converge on the same shape.
+func migrateSchema(sqlDB *sql.DB) error {
+	cols, err := tableColumns(sqlDB, "items")
+	if err != nil {
+		return err
+	}
+	if _, ok := cols["last_seen_in_feed"]; !ok {
+		if _, err := sqlDB.Exec(
+			`ALTER TABLE items ADD COLUMN last_seen_in_feed DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+		); err != nil {
+			return err
+		}
+	}
+	if _, ok := cols["viewed_at"]; !ok {
+		if _, err := sqlDB.Exec(`ALTER TABLE items ADD COLUMN viewed_at DATETIME`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func tableColumns(sqlDB *sql.DB, table string) (map[string]struct{}, error) {
+	rows, err := sqlDB.Query("SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
+	}
+	return out, rows.Err()
 }
 
 func newLogger(level string) *slog.Logger {

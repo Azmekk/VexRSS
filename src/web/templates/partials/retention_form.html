@@ -1,0 +1,20 @@
+{{define "retention_form"}}
+<form id="retention-form" class="retention"
+      hx-post="/settings/retention"
+      hx-target="#retention-form"
+      hx-swap="outerHTML">
+  <div class="retention__row">
+    <label class="retention__label" for="retention-days-input">Keep stories for</label>
+    <input id="retention-days-input" class="input retention__input"
+           type="number" name="retention_days" min="0" max="3650" step="1"
+           value="{{.RetentionDays}}" required inputmode="numeric" autocomplete="off">
+    <span class="retention__unit">days</span>
+    <button class="btn btn--primary" type="submit">Save</button>
+    {{if .Saved}}<span class="retention__flash" role="status">Saved ✓</span>{{end}}
+  </div>
+  <p class="retention__hint">
+    Items that have fallen off the feed for this long get deleted on the next refresh.
+    Set to <code>0</code> to keep everything forever.
+  </p>
+</form>
+{{end}}

@@ -52,7 +52,8 @@ func (f *Fetcher) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce fetches every known source once, in parallel.
+// RunOnce fetches every known source once, in parallel, then prunes items
+// older than the configured retention window.
 func (f *Fetcher) RunOnce(ctx context.Context) {
 	sources, err := f.Queries.ListSources(ctx)
 	if err != nil {
@@ -74,12 +75,41 @@ func (f *Fetcher) RunOnce(ctx context.Context) {
 		}()
 	}
 	wg.Wait()
+
+	f.pruneByRetention(ctx)
+}
+
+// pruneByRetention deletes items whose last_seen_in_feed is older than the
+// settings-configured retention window. A zero (or negative) value disables
+// pruning entirely.
+func (f *Fetcher) pruneByRetention(ctx context.Context) {
+	s, err := f.Queries.GetSettings(ctx)
+	if err != nil {
+		f.Logger.Debug("get settings for prune failed", "err", err)
+		return
+	}
+	if s.RetentionDays <= 0 {
+		return
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(s.RetentionDays) * 24 * time.Hour)
+	if err := f.Queries.PruneOldItems(ctx, cutoff); err != nil {
+		f.Logger.Warn("prune old items failed", "err", err)
+		return
+	}
+	f.Logger.Debug("prune complete", "cutoff", cutoff.Format(time.RFC3339), "days", s.RetentionDays)
 }
 
 // FetchSource parses a single source's feed and upserts its items.
+//
+// fetchStart is captured up front and used as both the items' last_seen_in_feed
+// and the source's last_fetch so "fresh = last_seen_in_feed >= last_fetch" is
+// consistent (otherwise the comparison races and items look stale moments
+// after being upserted).
 func (f *Fetcher) FetchSource(ctx context.Context, src dbq.Source) error {
 	cctx, cancel := context.WithTimeout(ctx, f.Timeout)
 	defer cancel()
+
+	fetchStart := time.Now().UTC()
 
 	fp := gofeed.NewParser()
 	fp.UserAgent = "vexrss/0.1 (+https://github.com/martinjordanov/vexrss)"
@@ -103,14 +133,15 @@ func (f *Fetcher) FetchSource(ctx context.Context, src dbq.Source) error {
 			pub = sql.NullTime{Time: *it.UpdatedParsed, Valid: true}
 		}
 		params := dbq.UpsertItemParams{
-			SourceID:    src.ID,
-			Guid:        guid,
-			Title:       firstNonEmpty(it.Title, "(untitled)"),
-			Url:         it.Link,
-			UrlNorm:     NormalizeURL(it.Link),
-			Description: cleanDescription(it.Description),
-			ImageUrl:    PickImage(it),
-			PublishedAt: pub,
+			SourceID:       src.ID,
+			Guid:           guid,
+			Title:          firstNonEmpty(it.Title, "(untitled)"),
+			Url:            it.Link,
+			UrlNorm:        NormalizeURL(it.Link),
+			Description:    cleanDescription(it.Description),
+			ImageUrl:       PickImage(it),
+			PublishedAt:    pub,
+			LastSeenInFeed: fetchStart,
 		}
 		if err := f.Queries.UpsertItem(cctx, params); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -120,7 +151,10 @@ func (f *Fetcher) FetchSource(ctx context.Context, src dbq.Source) error {
 		}
 	}
 
-	if err := f.Queries.TouchSourceFetch(cctx, src.ID); err != nil {
+	if err := f.Queries.TouchSourceFetch(cctx, dbq.TouchSourceFetchParams{
+		LastFetch: sql.NullTime{Time: fetchStart, Valid: true},
+		ID:        src.ID,
+	}); err != nil {
 		f.Logger.Debug("touch source failed", "source", src.Title, "err", err)
 	}
 	return nil

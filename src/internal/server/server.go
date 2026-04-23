@@ -65,6 +65,9 @@ func (s *Server) Routes() http.Handler {
 	r.Delete("/sources/{id}", s.handleDeleteSource)
 	r.Post("/sources/{id}/refresh", s.handleRefreshSource)
 
+	r.Post("/settings/retention", s.handleUpdateRetention)
+	r.Post("/items/{id}/seen", s.handleMarkSeen)
+
 	r.Get("/api/weather", s.handleWeather)
 	r.Get("/api/geocode", s.handleGeocode)
 

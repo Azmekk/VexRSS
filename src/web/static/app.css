@@ -332,6 +332,100 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
+/* ---------- Pill toggle (checkbox) ----------
+ * Used in the filter bar for the Fresh / Unseen / With-image booleans.
+ * A native <input type="checkbox"> visually-hidden; the label + track paint it. */
+.toggle {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  height: 40px; padding: 0 0.85rem 0 0.5rem;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.toggle:hover { background: var(--glass-strong); }
+.toggle input[type="checkbox"] {
+  position: absolute;
+  width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); border: 0;
+}
+.toggle__track {
+  display: inline-flex; align-items: center;
+  width: 32px; height: 18px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  transition: background 0.18s ease;
+  flex-shrink: 0;
+  padding: 2px;
+}
+.toggle__dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.85);
+  transition: transform 0.18s cubic-bezier(.2,.8,.2,1), background 0.18s ease;
+}
+.toggle__label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink-dim);
+  transition: color 0.15s ease;
+}
+.toggle input:checked ~ .toggle__track {
+  background: hsl(var(--accent-h), 55%, 48%);
+}
+.toggle input:checked ~ .toggle__track .toggle__dot {
+  transform: translateX(14px);
+  background: #fff;
+}
+.toggle input:checked ~ .toggle__label {
+  color: var(--ink);
+}
+.toggle:has(input:checked) {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+}
+.toggle input:focus-visible ~ .toggle__track {
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* ---------- Retention form (settings page) ---------- */
+
+.retention { display: flex; flex-direction: column; gap: 0.5rem; }
+.retention__row {
+  display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+}
+.retention__label { color: var(--ink-dim); font-size: 0.9rem; }
+.retention__input { width: 6.5rem; flex: 0 0 auto; }
+.retention__unit { color: var(--ink-dim); font-size: 0.9rem; }
+.retention__flash {
+  color: hsl(140, 50%, 60%);
+  font-size: 0.85rem;
+  animation: retention-flash 2s ease-out forwards;
+}
+@keyframes retention-flash {
+  0%, 70% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+.retention__hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.retention__hint code { background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 6px; }
+
+.settings__section { margin-bottom: 1.4rem; }
+.settings__section-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
 /* ---------- Card grid ---------- */
 
 .cards {
@@ -472,6 +566,21 @@ button { font: inherit; color: inherit; }
 }
 .card__arrow { opacity: 0; transform: translateX(-4px); transition: opacity 0.2s ease, transform 0.2s ease; }
 .card:hover .card__arrow { opacity: 1; transform: none; }
+
+/* Already-seen cards dim the image so unread content stands out. */
+.card--seen .card__bg,
+.card--seen .card__image { opacity: 0.45; }
+.card--seen .card__title { color: rgba(255, 255, 255, 0.75); }
+.card__seen {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 14px; height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.68rem;
+  line-height: 1;
+}
 
 /* ---------- Empty state ---------- */
 

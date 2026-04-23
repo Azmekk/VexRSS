@@ -7,9 +7,17 @@
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
       Feed
     </a>
-    <h1 class="settings__title">Sources</h1>
-    <p class="settings__sub">Add feeds, rename them, refresh or remove.</p>
+    <h1 class="settings__title">Settings</h1>
+    <p class="settings__sub">Configure retention, then add, rename, refresh or remove feeds.</p>
   </header>
+
+  <section class="settings__section" aria-labelledby="retention-heading">
+    <h2 id="retention-heading" class="settings__section-title">Retention</h2>
+    {{template "retention_form" (dict "RetentionDays" .RetentionDays "Saved" .RetentionSaved)}}
+  </section>
+
+  <section class="settings__section" aria-labelledby="sources-heading">
+    <h2 id="sources-heading" class="settings__section-title">Sources</h2>
 
   <form class="settings__add"
         hx-post="/sources"
@@ -35,6 +43,7 @@
     <p class="settings__hint">Tip: try <code>https://hnrss.org/frontpage</code>, <code>https://www.theverge.com/rss/index.xml</code>, or <code>https://xkcd.com/rss.xml</code></p>
   </form>
 
-  {{template "sources_list" .Sources}}
+    {{template "sources_list" .Sources}}
+  </section>
 </section>
 {{end}}

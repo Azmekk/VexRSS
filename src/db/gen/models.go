@@ -10,16 +10,23 @@ import (
 )
 
 type Item struct {
-	ID          int64
-	SourceID    int64
-	Guid        string
-	Title       string
-	Url         string
-	UrlNorm     string
-	Description string
-	ImageUrl    string
-	PublishedAt sql.NullTime
-	FetchedAt   time.Time
+	ID             int64
+	SourceID       int64
+	Guid           string
+	Title          string
+	Url            string
+	UrlNorm        string
+	Description    string
+	ImageUrl       string
+	PublishedAt    sql.NullTime
+	FetchedAt      time.Time
+	LastSeenInFeed time.Time
+	ViewedAt       sql.NullTime
+}
+
+type Setting struct {
+	ID            int64
+	RetentionDays int64
 }
 
 type Source struct {

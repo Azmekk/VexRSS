@@ -1,6 +1,7 @@
 {{define "card"}}
-<a class="card {{if not .ImageURL}}card--noimage{{end}}"
+<a class="card {{if not .ImageURL}}card--noimage{{end}} {{if .Seen}}card--seen{{end}}"
    href="{{.URL}}" target="_blank" rel="noopener noreferrer"
+   data-item-id="{{.ID}}"
    style="--img:{{safeCSSURL .ImageURL}}; --hue:{{hueFor .SourceTitle}};">
   <div class="card__bg" aria-hidden="true"></div>
   <div class="card__image" aria-hidden="true"></div>
@@ -8,6 +9,7 @@
     <div class="card__meta">
       <span class="card__chip" style="--chip-hue:{{hueFor .SourceTitle}};">{{.SourceTitle}}</span>
       {{with timeAgo .PublishedAt}}<span class="card__time">{{.}}</span>{{end}}
+      {{if .Seen}}<span class="card__seen" aria-label="Already seen" title="Already seen">✓</span>{{end}}
     </div>
     <h2 class="card__title">{{.Title}}</h2>
     {{with .Description}}<p class="card__blurb">{{trimBlurb . 160}}</p>{{end}}

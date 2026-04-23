@@ -29,6 +29,7 @@ type Card struct {
 	PublishedAt time.Time
 	SourceTitle string
 	SourceSite  string
+	Seen        bool
 }
 
 // SourceRow is the view model for the sources list.
@@ -51,9 +52,11 @@ type IndexData struct {
 
 // SettingsData is passed to the full-page settings template.
 type SettingsData struct {
-	PageName  string
-	PageTitle string
-	Sources   []SourceRow
+	PageName       string
+	PageTitle      string
+	Sources        []SourceRow
+	RetentionDays  int64
+	RetentionSaved bool
 }
 
 // CardsData is the partial render payload for #cards swaps.
@@ -65,12 +68,22 @@ type CardsData struct {
 // FilterState captures the currently-applied sort + source filter, used to
 // round-trip selection state in the template.
 type FilterState struct {
-	Sort   string // "new" | "old" | "shuffle"
-	Source string // "all" or numeric id as string
+	Sort       string // "new" | "old" | "shuffle"
+	Source     string // "all" or numeric id as string
+	FreshOnly  bool   // hide items no longer present in the latest fetch
+	UnseenOnly bool   // hide items the user has already clicked through
+	WithImage  bool   // hide items with no image
 }
 
 func (f FilterState) IsSort(s string) bool   { return f.Sort == s }
 func (f FilterState) IsSource(s string) bool { return f.Source == s }
+
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	filter := parseFilter(r)
@@ -104,14 +117,76 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load sources", http.StatusInternalServerError)
 		return
 	}
+	settings, err := s.Queries.GetSettings(r.Context())
+	if err != nil {
+		s.Logger.Error("load settings", "err", err)
+		http.Error(w, "could not load settings", http.StatusInternalServerError)
+		return
+	}
 	data := SettingsData{
-		PageName:  "settings",
-		PageTitle: "Settings",
-		Sources:   sources,
+		PageName:       "settings",
+		PageTitle:      "Settings",
+		Sources:        sources,
+		RetentionDays:  settings.RetentionDays,
+		RetentionSaved: r.URL.Query().Get("saved") == "retention",
 	}
 	if err := s.Templates.RenderPage(w, "settings", data); err != nil {
 		s.Logger.Error("render settings", "err", err)
 	}
+}
+
+// handleUpdateRetention sets the global retention-days value. Accepts 0
+// (never prune) through 3650 days (~10 years).
+func (s *Server) handleUpdateRetention(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	raw := strings.TrimSpace(r.Form.Get("retention_days"))
+	days, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || days < 0 || days > 3650 {
+		http.Error(w, "retention_days must be an integer between 0 and 3650", http.StatusBadRequest)
+		return
+	}
+	if err := s.Queries.UpdateRetention(r.Context(), days); err != nil {
+		s.Logger.Error("update retention", "err", err)
+		http.Error(w, "could not save retention", http.StatusInternalServerError)
+		return
+	}
+	// htmx swap target is the retention form itself — re-render with saved flash.
+	settings, err := s.Queries.GetSettings(r.Context())
+	if err != nil {
+		s.Logger.Error("reload settings", "err", err)
+		http.Error(w, "could not reload settings", http.StatusInternalServerError)
+		return
+	}
+	if err := s.Templates.RenderPartial(w, "retention_form", retentionFormData{
+		RetentionDays: settings.RetentionDays,
+		Saved:         true,
+	}); err != nil {
+		s.Logger.Error("render retention_form", "err", err)
+	}
+}
+
+type retentionFormData struct {
+	RetentionDays int64
+	Saved         bool
+}
+
+// handleMarkSeen is the landing point for the navigator.sendBeacon fired when
+// a user clicks a card. Idempotent — repeat POSTs are no-ops.
+func (s *Server) handleMarkSeen(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.Queries.MarkItemSeen(r.Context(), id); err != nil {
+		s.Logger.Debug("mark seen", "id", id, "err", err)
+		// still 204 — the beacon doesn't read the response, and we don't want
+		// to spam error logs when the DB is momentarily busy.
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleCards(w http.ResponseWriter, r *http.Request) {
@@ -325,10 +400,17 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 	lim := int64(limit)
 	off := int64(offset)
 
+	imgFlag := boolToInt64(f.WithImage)
+	freshFlag := boolToInt64(f.FreshOnly)
+	unseenFlag := boolToInt64(f.UnseenOnly)
+
 	if srcID, ok := parseSourceFilter(f.Source); ok {
 		switch f.Sort {
 		case "old":
-			rows, err := s.Queries.ListItemsOldestBySource(ctx, dbq.ListItemsOldestBySourceParams{SourceID: srcID, Limit: lim, Offset: off})
+			rows, err := s.Queries.ListItemsOldestBySource(ctx, dbq.ListItemsOldestBySourceParams{
+				SourceID: srcID, Column2: imgFlag, Column3: freshFlag, Column4: unseenFlag,
+				Limit: lim, Offset: off,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -338,7 +420,10 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 			}
 			return out, nil
 		case "shuffle":
-			rows, err := s.Queries.ListItemsRandomBySource(ctx, dbq.ListItemsRandomBySourceParams{SourceID: srcID, Limit: lim, Offset: off})
+			rows, err := s.Queries.ListItemsRandomBySource(ctx, dbq.ListItemsRandomBySourceParams{
+				SourceID: srcID, Column2: imgFlag, Column3: freshFlag, Column4: unseenFlag,
+				Limit: lim, Offset: off,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -348,7 +433,10 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 			}
 			return out, nil
 		default:
-			rows, err := s.Queries.ListItemsNewestBySource(ctx, dbq.ListItemsNewestBySourceParams{SourceID: srcID, Limit: lim, Offset: off})
+			rows, err := s.Queries.ListItemsNewestBySource(ctx, dbq.ListItemsNewestBySourceParams{
+				SourceID: srcID, Column2: imgFlag, Column3: freshFlag, Column4: unseenFlag,
+				Limit: lim, Offset: off,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -362,7 +450,9 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 
 	switch f.Sort {
 	case "old":
-		rows, err := s.Queries.ListItemsOldest(ctx, dbq.ListItemsOldestParams{Limit: lim, Offset: off})
+		rows, err := s.Queries.ListItemsOldest(ctx, dbq.ListItemsOldestParams{
+			Column1: imgFlag, Column2: freshFlag, Column3: unseenFlag, Limit: lim, Offset: off,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -372,7 +462,9 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 		}
 		return out, nil
 	case "shuffle":
-		rows, err := s.Queries.ListItemsRandom(ctx, dbq.ListItemsRandomParams{Limit: lim, Offset: off})
+		rows, err := s.Queries.ListItemsRandom(ctx, dbq.ListItemsRandomParams{
+			Column1: imgFlag, Column2: freshFlag, Column3: unseenFlag, Limit: lim, Offset: off,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +474,9 @@ func (s *Server) loadCards(ctx context.Context, f FilterState, limit, offset int
 		}
 		return out, nil
 	default:
-		rows, err := s.Queries.ListItemsNewest(ctx, dbq.ListItemsNewestParams{Limit: lim, Offset: off})
+		rows, err := s.Queries.ListItemsNewest(ctx, dbq.ListItemsNewestParams{
+			Column1: imgFlag, Column2: freshFlag, Column3: unseenFlag, Limit: lim, Offset: off,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -423,6 +517,7 @@ func cardFromNewest(r dbq.ListItemsNewestRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 func cardFromOldest(r dbq.ListItemsOldestRow) Card {
@@ -430,6 +525,7 @@ func cardFromOldest(r dbq.ListItemsOldestRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 func cardFromRandom(r dbq.ListItemsRandomRow) Card {
@@ -437,6 +533,7 @@ func cardFromRandom(r dbq.ListItemsRandomRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 func cardFromNewestBySource(r dbq.ListItemsNewestBySourceRow) Card {
@@ -444,6 +541,7 @@ func cardFromNewestBySource(r dbq.ListItemsNewestBySourceRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 func cardFromOldestBySource(r dbq.ListItemsOldestBySourceRow) Card {
@@ -451,6 +549,7 @@ func cardFromOldestBySource(r dbq.ListItemsOldestBySourceRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 func cardFromRandomBySource(r dbq.ListItemsRandomBySourceRow) Card {
@@ -458,23 +557,42 @@ func cardFromRandomBySource(r dbq.ListItemsRandomBySourceRow) Card {
 		ID: r.ID, Title: r.Title, URL: r.Url, Description: r.Description, ImageURL: r.ImageUrl,
 		PublishedAt: nullTime(r.PublishedAt, r.FetchedAt),
 		SourceTitle: r.SourceTitle, SourceSite: r.SourceSite,
+		Seen: r.ViewedAt.Valid,
 	}
 }
 
 // --- request helpers ---
 
 func parseFilter(r *http.Request) FilterState {
-	sort := r.URL.Query().Get("sort")
+	q := r.URL.Query()
+
+	sort := q.Get("sort")
 	switch sort {
 	case "new", "old", "shuffle":
 	default:
 		sort = "new"
 	}
-	src := r.URL.Query().Get("source")
+	src := q.Get("source")
 	if src == "" {
 		src = "all"
 	}
-	return FilterState{Sort: sort, Source: src}
+
+	// The form emits a hidden `filtered=1` every time it's submitted. Its
+	// presence distinguishes "user unticked a checkbox" (checkbox absent from
+	// query string, but filtered=1) from "first page load, no form submission
+	// yet" (no query params at all) — in the latter case we apply sensible
+	// defaults: fresh=on, unseen=on, with_image=off.
+	fs := FilterState{Sort: sort, Source: src}
+	if q.Has("filtered") {
+		fs.FreshOnly = q.Get("fresh") == "1"
+		fs.UnseenOnly = q.Get("unseen") == "1"
+		fs.WithImage = q.Get("with_image") == "1"
+	} else {
+		fs.FreshOnly = true
+		fs.UnseenOnly = true
+		fs.WithImage = false
+	}
+	return fs
 }
 
 func parsePaging(r *http.Request) (limit, offset int) {

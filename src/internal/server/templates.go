@@ -19,6 +19,7 @@ func Funcs() template.FuncMap {
 		"hueFor":    hueFor,
 		"hostOf":    hostOf,
 		"trimBlurb": trimBlurb,
+		"dict":      dictFunc,
 		"safeCSSURL": func(u string) template.CSS {
 			// Only used for CSS url(...) values we set per-card. We sanitise by
 			// stripping ) ( and backslashes, which are enough to break out of a
@@ -36,6 +37,25 @@ func Funcs() template.FuncMap {
 			return template.CSS("url(\"" + u + "\")")
 		},
 	}
+}
+
+// dictFunc lets templates construct an ad-hoc map for the `{{template}}`
+// directive, which only accepts a single data argument. Usage:
+//
+//	{{template "retention_form" (dict "RetentionDays" .X "Saved" false)}}
+func dictFunc(pairs ...any) (map[string]any, error) {
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("dict: expected even number of args, got %d", len(pairs))
+	}
+	out := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		k, ok := pairs[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key at index %d is not a string", i)
+		}
+		out[k] = pairs[i+1]
+	}
+	return out, nil
 }
 
 func timeAgo(t any) string {
@@ -116,6 +136,7 @@ func ParseTemplates(fsys fs.FS) (*Templates, error) {
 		"templates/partials/cards.html",
 		"templates/partials/source_row.html",
 		"templates/partials/sources_list.html",
+		"templates/partials/retention_form.html",
 	}
 
 	pages := map[string]*template.Template{}

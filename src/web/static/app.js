@@ -18,6 +18,25 @@
     document.body.dispatchEvent(new Event('refresh-cards'));
   });
 
+  // ---------- click-through mark-as-seen ----------
+  // Fire a non-blocking beacon to /items/<id>/seen when the user opens a card.
+  // sendBeacon is reliable during navigation; the <a target="_blank"> keeps
+  // the user's current feed open so "seen" state feels instant on reload.
+  document.addEventListener('click', (e) => {
+    const card = e.target.closest('a.card[data-item-id]');
+    if (!card) return;
+    const id = card.dataset.itemId;
+    if (!id) return;
+    try {
+      navigator.sendBeacon('/items/' + encodeURIComponent(id) + '/seen');
+    } catch {
+      // Ignore; worst case the item is just still marked unseen.
+    }
+    // Optimistically dim the card right away so the user sees the change
+    // without waiting for the next refresh.
+    card.classList.add('card--seen');
+  });
+
   // ---------- custom <select> replacement ----------
   // Windows' native <option> popups ignore page styling and look jarring
   // against the dark UI. We hide each <select> and render a custom button +
