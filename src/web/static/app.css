@@ -656,11 +656,9 @@ button { font: inherit; color: inherit; }
  * fits on a single row and there's enough vertical space to justify it. */
 @media (min-width: 720px) {
   .topbar {
-    position: sticky;
     top: 0;
   }
   .filterbar {
-    position: sticky;
     top: 64px;
   }
 }
